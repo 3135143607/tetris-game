@@ -246,6 +246,7 @@ const LB_KEY = 'tetris_leaderboard', NAME_KEY = 'tetris_player_name';
 let lbAutoPaused = false;
 
 function loadLB() { try { return JSON.parse(loadStorage(LB_KEY)) || []; } catch (e) { return []; } }
+function saveLB(lb) { saveStorage(LB_KEY, JSON.stringify(lb)); }
 
 function qualifies(score) {
   if (score <= 0) return false;
