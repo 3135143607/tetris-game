@@ -25,8 +25,11 @@
     backdrop-filter: blur(6px);
   }
   .panel h1 { font-size: 20px; text-align: center; color: #7ef9ff; letter-spacing: 2px; }
-  .stat { display: flex; justify-content: space-between; font-size: 14px; color: #bbb; }
-  .stat b { color: #fff; font-size: 16px; }
+  .stat { display: flex; justify-content: space-between; gap: 6px; font-size: 14px; color: #bbb; }
+  .stat span { flex: none; }
+  .stat b { color: #fff; font-size: 16px; flex: 1; min-width: 0; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stat b.small { font-size: 13px; }
+  .stat b.xsmall { font-size: 11px; }
   .label { font-size: 12px; color: #8aa; letter-spacing: 1px; margin-bottom: 4px; }
   #next, #hold { background: rgba(0,0,0,.4); border-radius: 6px; }
   .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
@@ -64,7 +67,10 @@
   .lb-rank.r2 { background: #c8d4e0; color: #333; }
   .lb-rank.r3 { background: #cd8a4b; color: #3a230c; }
   .lb-name { flex: 1; color: #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lb-score { color: #7ef9ff; font-weight: bold; }
+  .lb-score { color: #7ef9ff; font-weight: bold; white-space: nowrap; }
+  .lb-tabs { display: flex; gap: 6px; }
+  .lb-tabs button { flex: 1; padding: 6px 0; font-size: 12px; opacity: .5; }
+  .lb-tabs button.active { opacity: 1; outline: 2px solid rgba(126, 249, 255, .6); }
   .lb-sub { font-size: 11px; color: #889; margin-left: 28px; }
   .lb-empty { font-size: 12px; color: #889; }
   .hidden { display: none !important; }
@@ -84,6 +90,8 @@
     #next, #hold { width: 84px; height: 60px; }
     .stat { font-size: 12px; }
     .stat b { font-size: 14px; }
+    .stat b.small { font-size: 12px; }
+    .stat b.xsmall { font-size: 10px; }
     .btns { gap: 6px; }
     .btns button { padding: 6px 0; font-size: 11px; }
     .keys { display: none; }
@@ -116,7 +124,11 @@
       <button onclick="restart()">再来一局</button>
     </div>
     <div class="overlay hidden" id="lbOverlay">
-      <h2>排行榜 Top 10</h2>
+      <h2>排行榜</h2>
+      <div class="lb-tabs">
+        <button id="tabGlobal" onclick="showLeaderboard('global')">全服榜</button>
+        <button id="tabLocal" onclick="showLeaderboard('local')">本机榜</button>
+      </div>
       <div class="lb-list" id="lbList"></div>
       <button onclick="closeLeaderboard()">关闭</button>
     </div>
@@ -256,27 +268,91 @@ function qualifies(score) {
 
 function esc(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+// ---------- 全服榜（Supabase 云数据库） ----------
+const SB_URL = 'https://pndiroubiszdqttztmbc.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBuZGlyb3ViaXN6ZHF0dHp0bWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5MzQxNjQsImV4cCI6MjEwODUxMDE2NH0.plQYnDkerCzW1EJGpZSBQKb1Bqu7crpzojs5cgm_pa4';
+
+function sbReady() { return SB_URL && SB_KEY; }
+
+async function fetchGlobal() {
+  const r = await fetch(`${SB_URL}/rest/v1/scores?select=*&order=score.desc&limit=10`, {
+    headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return (await r.json()).map(e => ({
+    name: String(e.name || '无名玩家').slice(0, 12),
+    score: Number(e.score) || 0,
+    lines: Number(e.lines) || 0,
+    level: Number(e.level) || 0,
+    date: e.created_at ? new Date(e.created_at).toLocaleString('zh-CN', { hour12: false }) : '',
+  }));
+}
+
+async function pushGlobal(entry) {
+  const r = await fetch(`${SB_URL}/rest/v1/scores`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: SB_KEY,
+      Authorization: `Bearer ${SB_KEY}`,
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({ name: entry.name, score: entry.score, lines: entry.lines, level: entry.level }),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+}
+
+function renderRows(list) {
+  return list.map((e, i) =>
+    `<div class="lb-row"><span class="lb-rank r${i + 1}">${i + 1}</span>` +
+    `<span class="lb-name">${esc(e.name)}</span><span class="lb-score">${e.score}</span></div>` +
+    `<div class="lb-sub">${e.lines} 行 · Lv${e.level} · ${e.date}</div>`
+  ).join('');
+}
+
+let lbMode = 'global';
+
 function submitScore() {
   const name = (document.getElementById('playerName').value.trim() || '无名玩家').slice(0, 12);
   saveStorage(NAME_KEY, name);
+  const entry = { name, score, lines, level, date: new Date().toLocaleString('zh-CN', { hour12: false }) };
   const lb = loadLB();
-  lb.push({ name, score, lines, level, date: new Date().toLocaleString('zh-CN', { hour12: false }) });
+  lb.push(entry);
   lb.sort((a, b) => b.score - a.score);
   saveLB(lb.slice(0, 10));
-  showLeaderboard();
+  showLeaderboard('global');
+  if (sbReady()) {
+    pushGlobal(entry)
+      .then(() => { if (lbMode === 'global') showLeaderboard('global'); })
+      .catch(() => {});
+  }
 }
 
-function showLeaderboard() {
+function showLeaderboard(mode) {
+  lbMode = mode || 'global';
   if (running && !gameOver && !paused) { paused = true; lbAutoPaused = true; }
-  const lb = loadLB();
-  document.getElementById('lbList').innerHTML = lb.length
-    ? lb.map((e, i) =>
-        `<div class="lb-row"><span class="lb-rank r${i + 1}">${i + 1}</span>` +
-        `<span class="lb-name">${esc(e.name)}</span><span class="lb-score">${e.score}</span></div>` +
-        `<div class="lb-sub">${e.lines} 行 · Lv${e.level} · ${e.date}</div>`
-      ).join('')
-    : '<p class="lb-empty">暂无记录，快去创造第一条吧！</p>';
-  document.getElementById('lbOverlay').classList.remove('hidden');
+  document.getElementById('tabGlobal').classList.toggle('active', lbMode === 'global');
+  document.getElementById('tabLocal').classList.toggle('active', lbMode === 'local');
+  const el = document.getElementById('lbList');
+  if (lbMode === 'local') {
+    const lb = loadLB();
+    el.innerHTML = lb.length ? renderRows(lb)
+      : '<p class="lb-empty">本机暂无记录，快去创造第一条吧！</p>';
+    return;
+  }
+  if (!sbReady()) {
+    el.innerHTML = '<p class="lb-empty">全服榜尚未配置云端数据库<br>当前仅记录本机成绩</p>';
+    return;
+  }
+  el.innerHTML = '<p class="lb-empty">正在加载全服榜...</p>';
+  fetchGlobal().then(list => {
+    if (lbMode !== 'global') return;
+    el.innerHTML = list.length ? renderRows(list)
+      : '<p class="lb-empty">全服榜暂无记录，做第一个吧！</p>';
+  }).catch(() => {
+    if (lbMode !== 'global') return;
+    el.innerHTML = '<p class="lb-empty">全服榜加载失败，请检查网络后重试</p>';
+  });
 }
 
 function closeLeaderboard() {
@@ -484,10 +560,18 @@ function doHold() {
   drawHold();
 }
 
+function setStat(id, val) {
+  const el = document.getElementById(id);
+  const s = String(val);
+  el.textContent = s;
+  el.classList.toggle('small', s.length > 7);
+  el.classList.toggle('xsmall', s.length > 10);
+}
+
 function updateHUD() {
   if (score > best) { best = score; newRecord = true; saveStorage(BEST_KEY, best); }
-  document.getElementById('score').textContent = score;
-  document.getElementById('best').textContent = best;
+  setStat('score', score);
+  setStat('best', best);
   document.getElementById('lines').textContent = lines;
   document.getElementById('level').textContent = level;
 }
