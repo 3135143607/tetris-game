@@ -48,6 +48,25 @@
   }
   .overlay h2 { color: #7ef9ff; font-size: 26px; letter-spacing: 3px; }
   .overlay p { color: #aab; font-size: 14px; line-height: 1.8; }
+  .name-row { display: flex; gap: 6px; }
+  .name-row input {
+    width: 140px; padding: 7px 8px; border: 1px solid rgba(126,249,255,.4);
+    border-radius: 6px; background: rgba(0,0,0,.4); color: #fff; font-size: 13px; outline: none;
+  }
+  .name-row button { padding: 7px 14px; }
+  .lb-list { width: 240px; max-height: 400px; overflow-y: auto; text-align: left; }
+  .lb-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 14px; }
+  .lb-rank {
+    width: 20px; height: 20px; border-radius: 50%; background: rgba(255,255,255,.15);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #ccc; flex: none;
+  }
+  .lb-rank.r1 { background: #ffd500; color: #4a3800; }
+  .lb-rank.r2 { background: #c8d4e0; color: #333; }
+  .lb-rank.r3 { background: #cd8a4b; color: #3a230c; }
+  .lb-name { flex: 1; color: #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-score { color: #7ef9ff; font-weight: bold; }
+  .lb-sub { font-size: 11px; color: #889; margin-left: 28px; }
+  .lb-empty { font-size: 12px; color: #889; }
   .hidden { display: none !important; }
   .board-box { position: relative; }
   .touch { display: none; touch-action: none; }
@@ -90,7 +109,16 @@
     <div class="overlay hidden" id="overOverlay">
       <h2>游戏结束</h2>
       <p id="finalScore"></p>
+      <div class="name-row hidden" id="nameRow">
+        <input id="playerName" maxlength="12" placeholder="输入名字上榜">
+        <button onclick="submitScore()">上榜</button>
+      </div>
       <button onclick="restart()">再来一局</button>
+    </div>
+    <div class="overlay hidden" id="lbOverlay">
+      <h2>排行榜 Top 10</h2>
+      <div class="lb-list" id="lbList"></div>
+      <button onclick="closeLeaderboard()">关闭</button>
     </div>
   </div>
 
@@ -112,6 +140,7 @@
       <button onclick="restart()">重新开始</button>
       <button onclick="togglePause()">暂停 (P)</button>
       <button id="soundBtn" onclick="toggleSound()">音效: 开</button>
+      <button onclick="showLeaderboard()">排行榜</button>
     </div>
     <div class="keys">
       <kbd>←</kbd><kbd>→</kbd> 移动<br>
@@ -211,6 +240,52 @@ function toggleSound() {
   saveStorage(SOUND_KEY, soundOn ? '1' : '0');
   document.getElementById('soundBtn').textContent = soundOn ? '音效: 开' : '音效: 关';
 }
+
+// ---------- 排行榜（本机 Top 10） ----------
+const LB_KEY = 'tetris_leaderboard', NAME_KEY = 'tetris_player_name';
+let lbAutoPaused = false;
+
+function loadLB() { try { return JSON.parse(loadStorage(LB_KEY)) || []; } catch (e) { return []; } }
+
+function qualifies(score) {
+  if (score <= 0) return false;
+  const lb = loadLB();
+  return lb.length < 10 || score > lb[lb.length - 1].score;
+}
+
+function esc(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function submitScore() {
+  const name = (document.getElementById('playerName').value.trim() || '无名玩家').slice(0, 12);
+  saveStorage(NAME_KEY, name);
+  const lb = loadLB();
+  lb.push({ name, score, lines, level, date: new Date().toLocaleString('zh-CN', { hour12: false }) });
+  lb.sort((a, b) => b.score - a.score);
+  saveLB(lb.slice(0, 10));
+  showLeaderboard();
+}
+
+function showLeaderboard() {
+  if (running && !gameOver && !paused) { paused = true; lbAutoPaused = true; }
+  const lb = loadLB();
+  document.getElementById('lbList').innerHTML = lb.length
+    ? lb.map((e, i) =>
+        `<div class="lb-row"><span class="lb-rank r${i + 1}">${i + 1}</span>` +
+        `<span class="lb-name">${esc(e.name)}</span><span class="lb-score">${e.score}</span></div>` +
+        `<div class="lb-sub">${e.lines} 行 · Lv${e.level} · ${e.date}</div>`
+      ).join('')
+    : '<p class="lb-empty">暂无记录，快去创造第一条吧！</p>';
+  document.getElementById('lbOverlay').classList.remove('hidden');
+}
+
+function closeLeaderboard() {
+  document.getElementById('lbOverlay').classList.add('hidden');
+  if (lbAutoPaused) { paused = false; lbAutoPaused = false; }
+}
+
+document.getElementById('playerName').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitScore();
+});
 
 // ---------- 动态背景（随等级变换主题色 + 星尘粒子） ----------
 const THEMES = [
@@ -508,6 +583,8 @@ function startGame() {
   document.getElementById('startOverlay').classList.add('hidden');
   document.getElementById('overOverlay').classList.add('hidden');
   document.getElementById('pauseOverlay').classList.add('hidden');
+  document.getElementById('lbOverlay').classList.add('hidden');
+  lbAutoPaused = false;
   requestAnimationFrame(update);
 }
 
@@ -525,10 +602,17 @@ function doGameOver() {
   document.getElementById('finalScore').innerHTML =
     `分数 ${score}　行数 ${lines}<br>最高分 ${best}` +
     (newRecord && score > 0 ? '<br>★ 新纪录！' : '');
+  const canRank = qualifies(score);
+  document.getElementById('nameRow').classList.toggle('hidden', !canRank);
+  if (canRank) {
+    document.getElementById('playerName').value = loadStorage(NAME_KEY) || '';
+    setTimeout(() => document.getElementById('playerName').focus(), 50);
+  }
   document.getElementById('overOverlay').classList.remove('hidden');
 }
 
 document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
   if (!running) {
     if (['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(e.code)) startGame();
     return;
