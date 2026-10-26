@@ -330,6 +330,7 @@ function submitScore() {
 
 function showLeaderboard(mode) {
   lbMode = mode || 'global';
+  document.getElementById('lbOverlay').classList.remove('hidden');
   if (running && !gameOver && !paused) { paused = true; lbAutoPaused = true; }
   document.getElementById('tabGlobal').classList.toggle('active', lbMode === 'global');
   document.getElementById('tabLocal').classList.toggle('active', lbMode === 'local');
